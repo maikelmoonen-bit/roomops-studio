@@ -85,10 +85,13 @@ public sealed class ExchangeGateway(ISessionManager sessions)
         return await ResolveRecipientsAsync(policy, ct);
     }
 
-    /// <summary>Reads calendar processing of several mailboxes, up to <paramref name="parallelism"/> at a time. Results keep the input order.</summary>
-    public async Task<IReadOnlyList<ReadOutcome<BookingPolicy>>> GetBookingPoliciesAsync(IReadOnlyList<string> identities, int parallelism, CancellationToken ct)
+    /// <summary>
+    /// Reads calendar processing of several mailboxes, up to <paramref name="parallelism"/> at a time. Results keep the input order;
+    /// <paramref name="progress"/> receives the number of mailboxes read so far.
+    /// </summary>
+    public async Task<IReadOnlyList<ReadOutcome<BookingPolicy>>> GetBookingPoliciesAsync(IReadOnlyList<string> identities, int parallelism, Action<int>? progress, CancellationToken ct)
     {
-        var results = await RunMany("Get-CalendarProcessing", identities, parallelism, ct);
+        var results = await RunMany("Get-CalendarProcessing", identities, parallelism, progress, ct);
         var outcomes = new List<ReadOutcome<BookingPolicy>>(results.Count);
         for (var i = 0; i < results.Count; i++)
         {
@@ -105,8 +108,8 @@ public sealed class ExchangeGateway(ISessionManager sessions)
     private static RoomOpsException BookingNotFound(string identity) =>
         RoomOpsException.NotFound("booking.notFound", Text.L($"Calendar processing for '{identity}' was not returned.", $"De agendaverwerking voor '{identity}' is niet geretourneerd."));
 
-    private Task<IReadOnlyList<BatchItemResult>> RunMany(string command, IReadOnlyList<string> identities, int parallelism, CancellationToken ct) =>
-        sessions.Runner(ServiceKind.Exchange).RunManyAsync(identities.Select(i => PsCommand.Create(command, ("Identity", i))).ToList(), parallelism, ct);
+    private Task<IReadOnlyList<BatchItemResult>> RunMany(string command, IReadOnlyList<string> identities, int parallelism, Action<int>? progress, CancellationToken ct) =>
+        sessions.Runner(ServiceKind.Exchange).RunManyAsync(identities.Select(i => PsCommand.Create(command, ("Identity", i))).ToList(), parallelism, progress, ct);
 
     public static BookingPolicy MapBookingPolicy(JsonObject o)
     {
@@ -253,10 +256,13 @@ public sealed class ExchangeGateway(ISessionManager sessions)
         return MapWorkingHours(result.Objects[0]);
     }
 
-    /// <summary>Reads working hours of several mailboxes, up to <paramref name="parallelism"/> at a time. Results keep the input order.</summary>
-    public async Task<IReadOnlyList<ReadOutcome<WorkingHoursConfig>>> GetWorkingHoursAsync(IReadOnlyList<string> identities, int parallelism, CancellationToken ct)
+    /// <summary>
+    /// Reads working hours of several mailboxes, up to <paramref name="parallelism"/> at a time. Results keep the input order;
+    /// <paramref name="progress"/> receives the number of mailboxes read so far.
+    /// </summary>
+    public async Task<IReadOnlyList<ReadOutcome<WorkingHoursConfig>>> GetWorkingHoursAsync(IReadOnlyList<string> identities, int parallelism, Action<int>? progress, CancellationToken ct)
     {
-        var results = await RunMany("Get-MailboxCalendarConfiguration", identities, parallelism, ct);
+        var results = await RunMany("Get-MailboxCalendarConfiguration", identities, parallelism, progress, ct);
         return results.Select((r, i) => r switch
         {
             { Error: { } error } => new ReadOutcome<WorkingHoursConfig>(null, error),

@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { flexRender, getCoreRowModel, getSortedRowModel, useReactTable, type ColumnDef, type SortingState, type VisibilityState } from "@tanstack/react-table";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { AlertOctagon, AlertTriangle, ArrowDownUp, Bookmark, Check, CircleHelp, Columns3, Download, Filter, LayoutGrid, Accessibility, MonitorPlay, Plus, Rows3, ScanSearch, Search, Trash2, Users, X, Layers, ListPlus, CalendarCog, RefreshCcw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { getCoreRowModel, getSortedRowModel, useReactTable, type ColumnDef, type SortingState, type VisibilityState } from "@tanstack/react-table";
+import { AlertOctagon, AlertTriangle, Bookmark, Check, CircleHelp, Columns3, Download, Filter, LayoutGrid, Accessibility, MonitorPlay, Plus, Rows3, ScanSearch, Search, Trash2, Users, X, Layers, ListPlus, CalendarCog, RefreshCcw } from "lucide-react";
 import { toast } from "sonner";
 import { bridge } from "@/bridge/client";
 import { useBridgeQuery } from "@/bridge/hooks";
@@ -17,6 +16,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { EmptyState, ErrorState, PageHeader, RoomName } from "@/components/common/domain";
 import { applyFilters, emptyFilters, quickFilters, type QuickFilter, type RoomFilterState } from "./room-filters";
 import { RoomBulkDialogs } from "./bulk-actions";
+import { RoomGrid, roomColumn } from "./room-grid";
 import { t, tn, tx } from "@/lib/i18n";
 
 const modeLabels: Record<BookingMode | "NotScanned", string> = {
@@ -37,7 +37,7 @@ export function BookingModeBadge({ mode, label }: { mode: BookingMode | null; la
   return <Badge tone={tone}>{label ?? t(modeLabels[mode])}</Badge>;
 }
 
-function HealthCell({ room }: { room: RoomSummary }) {
+export function HealthCell({ room }: { room: RoomSummary }) {
   const f = room.findings;
   if (f.critical + f.warning + f.recommendation === 0 && f.unableToVerify === 0) return <span className="inline-flex items-center gap-1 text-[12px] text-ok"><Check className="size-3.5" />{t("No findings")}</span>;
   return (
@@ -104,18 +104,7 @@ export default function RoomsPage() {
       header: ({ table }) => <Checkbox aria-label={t("Select all")} checked={table.getIsAllRowsSelected() ? true : table.getIsSomeRowsSelected() ? "indeterminate" : false} onCheckedChange={(v) => table.toggleAllRowsSelected(v)} />,
       cell: ({ row }) => <Checkbox aria-label={t("Select {name}", { name: row.original.displayName })} checked={row.getIsSelected()} onCheckedChange={(v) => row.toggleSelected(v)} />,
     },
-    {
-      id: "room",
-      size: 300,
-      accessorFn: (r) => r.displayName,
-      header: t("Room"),
-      cell: ({ row }) => (
-        <div className="min-w-0">
-          <RoomName name={row.original.displayName} className="font-medium text-ink" />
-          <div className="t-mono mt-0.5 truncate text-[11px] text-ink-3">{row.original.primarySmtpAddress}</div>
-        </div>
-      ),
-    },
+    roomColumn,
     { id: "capacity", size: 90, accessorFn: (r) => r.capacity ?? -1, header: t("Capacity"), cell: ({ row }) => row.original.capacity ? <span className="tabular">{row.original.capacity}</span> : <span className="text-ink-3">{t("Not set")}</span> },
     {
       id: "location",
@@ -162,10 +151,6 @@ export default function RoomsPage() {
     enableColumnResizing: true,
     columnResizeMode: "onChange",
   });
-
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const rowModel = table.getRowModel().rows;
-  const virtualizer = useVirtualizer({ count: rowModel.length, getScrollElement: () => scrollRef.current, estimateSize: () => 52, overscan: 12 });
 
   useEffect(() => setSelection((s) => Object.fromEntries(Object.entries(s).filter(([id]) => rooms.some((r) => r.id === id)))), [rooms]);
 
@@ -285,63 +270,24 @@ export default function RoomsPage() {
       )}
 
       {inventory.data && filtered.length > 0 && layout === "table" && (
-        <Card className="overflow-hidden">
-          <div ref={scrollRef} className="scroll-area max-h-[calc(100vh-290px)] min-h-[320px]" role="grid" aria-rowcount={rowModel.length}>
-            <div style={{ width: table.getTotalSize(), minWidth: "100%" }}>
-              <div className="sticky top-0 z-10 flex border-b border-line bg-surface" role="row">
-                {table.getHeaderGroups()[0].headers.map((header) => (
-                  <div key={header.id} role="columnheader" className="relative flex h-9 shrink-0 items-center px-3 text-[11.5px] font-semibold text-ink-3" style={{ width: header.getSize() }}>
-                    {header.column.getCanSort() ? (
-                      <button type="button" onClick={header.column.getToggleSortingHandler()} className="flex items-center gap-1 hover:text-ink">
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        <ArrowDownUp className={cn("size-3", header.column.getIsSorted() ? "text-accent" : "opacity-40")} />
-                      </button>
-                    ) : flexRender(header.column.columnDef.header, header.getContext())}
-                    {header.column.getCanResize() && (
-                      <div onMouseDown={header.getResizeHandler()} onTouchStart={header.getResizeHandler()} className={cn("absolute right-0 top-2 h-5 w-1 cursor-col-resize rounded-full hover:bg-accent", header.column.getIsResizing() && "bg-accent")} aria-hidden />
-                    )}
-                  </div>
-                ))}
-              </div>
-              <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
-                {virtualizer.getVirtualItems().map((v) => {
-                  const row = rowModel[v.index];
-                  return (
-                    <ContextMenu key={row.id}>
-                      <ContextMenuTrigger asChild>
-                        <div
-                          role="row"
-                          tabIndex={0}
-                          onClick={() => navigate(`/rooms/${encodeURIComponent(row.original.id)}`)}
-                          onKeyDown={(e) => e.key === "Enter" && navigate(`/rooms/${encodeURIComponent(row.original.id)}`)}
-                          className={cn("absolute left-0 flex w-full cursor-default items-center border-b border-line text-[13px] transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none", row.getIsSelected() && "bg-[color-mix(in_srgb,var(--accent)_7%,transparent)]")}
-                          style={{ top: v.start, height: v.size }}
-                        >
-                          {row.getVisibleCells().map((cell) => (
-                            <div key={cell.id} role="gridcell" className="shrink-0 overflow-hidden px-3" style={{ width: cell.column.getSize() }}>
-                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                            </div>
-                          ))}
-                        </div>
-                      </ContextMenuTrigger>
-                      <ContextMenuContent>
-                        <ContextMenuItem onSelect={() => navigate(`/rooms/${encodeURIComponent(row.original.id)}`)}><Rows3 />{t("Open room")}</ContextMenuItem>
-                        <ContextMenuItem onSelect={() => navigate(`/booking/${encodeURIComponent(row.original.id)}`)}><CalendarCog />{t("Edit booking policy")}</ContextMenuItem>
-                        <ContextMenuItem onSelect={() => navigate(`/delegates/${encodeURIComponent(row.original.id)}`)}><Users />{t("Manage delegates")}</ContextMenuItem>
-                        <ContextMenuSeparator />
-                        <ContextMenuItem onSelect={() => void navigator.clipboard?.writeText(row.original.primarySmtpAddress)}><RefreshCcw />{t("Copy email address")}</ContextMenuItem>
-                      </ContextMenuContent>
-                    </ContextMenu>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center justify-between border-t border-line px-3 py-2 text-[12px] text-ink-3">
-            <span>{filtered.length !== rooms.length ? tn(filtered.length, "{n} room of {total}", "{n} rooms of {total}", { total: rooms.length }) : tn(filtered.length, "{n} room", "{n} rooms")}</span>
-            <span>{t("Right-click a row for actions · drag a column edge to resize")}</span>
-          </div>
-        </Card>
+        <RoomGrid
+          table={table}
+          total={rooms.length}
+          onOpen={(r) => navigate(`/rooms/${encodeURIComponent(r.id)}`)}
+          hint={t("Right-click a row for actions · drag a column edge to resize")}
+          wrapRow={(r, row) => (
+            <ContextMenu>
+              <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+              <ContextMenuContent>
+                <ContextMenuItem onSelect={() => navigate(`/rooms/${encodeURIComponent(r.id)}`)}><Rows3 />{t("Open room")}</ContextMenuItem>
+                <ContextMenuItem onSelect={() => navigate(`/booking/${encodeURIComponent(r.id)}`)}><CalendarCog />{t("Edit booking policy")}</ContextMenuItem>
+                <ContextMenuItem onSelect={() => navigate(`/delegates/${encodeURIComponent(r.id)}`)}><Users />{t("Manage delegates")}</ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem onSelect={() => void navigator.clipboard?.writeText(r.primarySmtpAddress)}><RefreshCcw />{t("Copy email address")}</ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
+          )}
+        />
       )}
 
       {inventory.data && filtered.length > 0 && layout === "cards" && (

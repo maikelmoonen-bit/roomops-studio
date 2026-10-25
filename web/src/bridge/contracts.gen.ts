@@ -954,8 +954,12 @@ export interface RoomSummary {
   bookingMode: BookingMode | null;
   bookingModeLabel: string | null;
   delegateCount: number | null;
+  delegateNames: string[];
+  forwardRequestsToDelegates: boolean | null;
   bookingWindowInDays: number | null;
   maximumDurationInMinutes: number | null;
+  allowRecurringMeetings: boolean | null;
+  scheduleOnlyDuringWorkHours: boolean | null;
   configurationLoadedAt: string | null;
   timeZone: string | null;
   workingHours: WorkingHoursConfig | null;

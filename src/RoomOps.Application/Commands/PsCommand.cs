@@ -223,15 +223,17 @@ public interface ICommandRunner
 
     /// <summary>
     /// Runs independent invocations of one read command, up to <paramref name="parallelism"/> at a time where the runner supports it.
-    /// Results keep the order of <paramref name="commands"/>; a failing command does not stop the others.
+    /// Results keep the order of <paramref name="commands"/>; a failing command does not stop the others. <paramref name="progress"/>
+    /// receives the number of completed commands each time one finishes.
     /// </summary>
-    async Task<IReadOnlyList<BatchItemResult>> RunManyAsync(IReadOnlyList<PsCommand> commands, int parallelism, CancellationToken cancellationToken)
+    async Task<IReadOnlyList<BatchItemResult>> RunManyAsync(IReadOnlyList<PsCommand> commands, int parallelism, Action<int>? progress, CancellationToken cancellationToken)
     {
         var results = new List<BatchItemResult>(commands.Count);
         foreach (var command in commands)
         {
             try { results.Add(new(await RunAsync(command, cancellationToken), null)); }
             catch (CommandFailedException ex) { results.Add(new(null, ex)); }
+            progress?.Invoke(results.Count);
         }
         return results;
     }

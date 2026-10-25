@@ -69,6 +69,7 @@ public sealed partial class PowerShellWorker : IServiceWorker
     private readonly ILogger _logger;
     private readonly SemaphoreSlim _single = new(1, 1);
     private readonly ConcurrentDictionary<long, TaskCompletionSource<JsonObject>> _pending = new();
+    private readonly ConcurrentDictionary<long, Action<JsonObject>> _progress = new();
     private readonly string _nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     private readonly TaskCompletionSource<JsonObject> _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Process? _process;
@@ -247,7 +248,7 @@ public sealed partial class PowerShellWorker : IServiceWorker
     /// Runs one read command for many parameter sets in a single request. The worker runs up to <paramref name="parallelism"/> of them
     /// at a time in runspaces that share this process's Microsoft 365 connection.
     /// </summary>
-    public async Task<IReadOnlyList<BatchItemResult>> RunManyAsync(IReadOnlyList<PsCommand> commands, int parallelism, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<BatchItemResult>> RunManyAsync(IReadOnlyList<PsCommand> commands, int parallelism, Action<int>? progress, CancellationToken cancellationToken)
     {
         if (commands.Count == 0) return [];
         var name = commands[0].Name;
@@ -262,7 +263,11 @@ public sealed partial class PowerShellWorker : IServiceWorker
             ["items"] = new JsonArray(commands.Select(c => (JsonNode?)ToParameters(c)).ToArray()),
             ["throttle"] = Math.Clamp(parallelism, 1, MaxParallelism),
         };
-        var response = await SendAsync("invoke-many", payload, _options.CommandTimeout, cancellationToken);
+        Action<JsonObject>? onProgress = progress is null ? null : frame =>
+        {
+            if (frame["completed"] is JsonValue v && v.TryGetValue<int>(out var completed)) progress(completed);
+        };
+        var response = await SendAsync("invoke-many", payload, _options.CommandTimeout, cancellationToken, onProgress: onProgress);
         var items = response["data"] as JsonArray ?? [];
         if (items.Count != commands.Count)
         {
@@ -332,13 +337,14 @@ public sealed partial class PowerShellWorker : IServiceWorker
     /// <summary>Test hook: simulates a crashed worker process.</summary>
     internal void KillForTests() => _process?.Kill(entireProcessTree: true);
 
-    private async Task<JsonObject> SendAsync(string op, JsonObject payload, TimeSpan timeout, CancellationToken cancellationToken, string? nonceOverride = null)
+    private async Task<JsonObject> SendAsync(string op, JsonObject payload, TimeSpan timeout, CancellationToken cancellationToken, string? nonceOverride = null, Action<JsonObject>? onProgress = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         await _single.WaitAsync(cancellationToken);
         var id = Interlocked.Increment(ref _nextId);
         var tcs = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pending[id] = tcs;
+        if (onProgress is not null) _progress[id] = onProgress;
         try
         {
             if (!IsAlive)
@@ -370,6 +376,7 @@ public sealed partial class PowerShellWorker : IServiceWorker
         finally
         {
             _pending.TryRemove(id, out _);
+            _progress.TryRemove(id, out _);
             _single.Release();
         }
     }
@@ -406,6 +413,15 @@ public sealed partial class PowerShellWorker : IServiceWorker
                 if (frame["type"]?.ToString() == "ready")
                 {
                     _ready.TrySetResult(frame);
+                    continue;
+                }
+                if (frame["type"]?.ToString() == "progress")
+                {
+                    if (frame["id"] is JsonValue progressId && progressId.TryGetValue<long>(out var pid) && _progress.TryGetValue(pid, out var onProgress))
+                    {
+                        try { onProgress(frame); }
+                        catch (Exception ex) { _logger.LogWarning(ex, "Progress handler for {Service} worker request failed", _service); }
+                    }
                     continue;
                 }
                 if (frame["id"] is JsonValue idValue && idValue.TryGetValue<long>(out var id) && _pending.TryGetValue(id, out var tcs))

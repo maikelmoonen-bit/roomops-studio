@@ -78,7 +78,7 @@ describe("policy diff", () => {
 describe("room filters", () => {
   const room = (over: Partial<RoomSummary>): RoomSummary => ({
     id: "1", displayName: "EHV 1.02 Focus", primarySmtpAddress: "ehv-1.02@x.example", alias: "ehv-1.02", capacity: 2, placesCapacity: null, building: "Eindhoven Headquarters", floor: "Floor 1", section: null, placeId: "p",
-    locationPath: "Eindhoven Headquarters / Floor 1", roomLists: [], bookingMode: null, bookingModeLabel: null, delegateCount: null, bookingWindowInDays: null, maximumDurationInMinutes: null, configurationLoadedAt: null, timeZone: null, workingHours: null,
+    locationPath: "Eindhoven Headquarters / Floor 1", roomLists: [], bookingMode: null, bookingModeLabel: null, delegateCount: null, delegateNames: [], forwardRequestsToDelegates: null, bookingWindowInDays: null, maximumDurationInMinutes: null, allowRecurringMeetings: null, scheduleOnlyDuringWorkHours: null, configurationLoadedAt: null, timeZone: null, workingHours: null,
     findings: { critical: 0, warning: 0, recommendation: 0, informational: 0, unableToVerify: 1 }, isDirSynced: false, mtrEnabled: null, wheelchairAccessible: null, tags: [], devices: [], templateName: null, whenCreated: null, ...over,
   });
   it("combines search, building and quick filters", () => {

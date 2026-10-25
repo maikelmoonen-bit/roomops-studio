@@ -50,15 +50,21 @@ public sealed class ScanService(ISessionManager sessions, InventoryService inven
             {
                 if (token.IsCancellationRequested || sessions.Current.Epoch != epoch) break;
                 var chunk = rooms.Skip(start).Take(ChunkSize).ToList();
-                cache.LastScan = progress with { Completed = start, Failed = failed, CurrentRoom = chunk[0].DisplayName };
-                events.Publish("scan.progress", cache.LastScan);
+                // Each room takes two reads (booking, then working hours), so half the reads completed in this chunk count as rooms.
+                void Report(int readsInChunk)
+                {
+                    var done = Math.Min(chunk.Count, readsInChunk / 2);
+                    cache.LastScan = progress with { Completed = start + done, Failed = failed, CurrentRoom = chunk[Math.Min(done, chunk.Count - 1)].DisplayName };
+                    events.Publish("scan.progress", cache.LastScan);
+                }
+                Report(0);
                 var addresses = chunk.Select(r => r.PrimarySmtpAddress).ToList();
                 IReadOnlyList<ReadOutcome<BookingPolicy>> bookings;
                 IReadOnlyList<ReadOutcome<WorkingHoursConfig>> hours;
                 try
                 {
-                    bookings = await exchange.GetBookingPoliciesAsync(addresses, Parallelism, token);
-                    hours = await exchange.GetWorkingHoursAsync(addresses, Parallelism, token);
+                    bookings = await exchange.GetBookingPoliciesAsync(addresses, Parallelism, n => Report(n), token);
+                    hours = await exchange.GetWorkingHoursAsync(addresses, Parallelism, n => Report(chunk.Count + n), token);
                 }
                 catch (OperationCanceledException)
                 {

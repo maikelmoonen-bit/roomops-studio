@@ -130,7 +130,9 @@ public sealed class WorkerContractTests : IAsyncLifetime
         var commands = new[] { "a@fake.example", "missing@fake.example", "a@fake.example" }
             .Select(id => PsCommand.Create("Get-EXOMailbox", ("Identity", id), ("Properties", new[] { "ResourceCapacity" })))
             .ToList();
-        var results = await Worker.RunManyAsync(commands, 3, CancellationToken.None);
+        var progress = new List<int>();
+        var results = await Worker.RunManyAsync(commands, 3, progress.Add, CancellationToken.None);
+        Assert.Equal([1, 2, 3], progress); // one progress frame per completed item, while the batch runs
         Assert.Equal(3, results.Count);
         Assert.Equal(8, Assert.Single(results[0].Result!.Objects)["ResourceCapacity"]!.GetValue<int>());
         Assert.Equal(ErrorKind.NotFound, results[1].Error!.Kind); // one failing item doesn't fail the batch

@@ -28,9 +28,9 @@ RoomOps Studio brings Exchange Online room mailboxes, room lists, booking polici
 | PowerShell 7 worker process (protocol, allowlist, nonce, literal binding, crash handling) | **Implemented · contract-tested with real pwsh 7.4** and a stand-in module (14 tests) |
 | Bridge dispatcher and persistence | **Implemented · tested** (8 tests) |
 | User interface | **Implemented · Playwright-tested in demo mode** (17 flows + screenshot capture in both themes at 1920×1080 and 1366×768) |
-| Windows desktop shell (WPF + WebView2) | **Implemented · builds and packages** (`RoomOpsStudio.exe`, self-contained win-x64). **1.0.0 hung at start-up on Windows; 1.0.1 fixes the cause but is not yet confirmed on Windows.** |
+| Windows desktop shell (WPF + WebView2) | **Implemented · runs on Windows** (`RoomOpsStudio.exe`, self-contained win-x64). |
 | MSI installer | **Implemented · install, upgrade, downgrade block and uninstall tested under Wine 9.** Not yet installed on Windows. |
-| Exchange Online, Microsoft Places and Microsoft Graph live operations | **Implemented · live-verification-pending.** No authorized tenant was available; every live adapter must be verified before production use. See [VERIFICATION](docs/VERIFICATION.md). |
+| Exchange Online, Microsoft Places and Microsoft Graph live operations | **Implemented · partly verified live.** Exchange Online inventory, the configuration scan and recipient search are in use on a live tenant. Verify the other live operations before relying on them; see [VERIFICATION](docs/VERIFICATION.md). |
 
 ## What it does
 
@@ -85,7 +85,7 @@ Outputs:
 
 ### Installing
 
-Ready-made packages (MSI and portable zip) are attached to each version on the repository's **Releases** page.
+Ready-made packages (MSI and portable zip) are attached to each version on the repository's **Releases** page. What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 The MSI installs for all users in `C:\Program Files\RoomOps Studio` and adds **RoomOps Studio** to the Start menu. Installing needs administrator rights; the application itself runs without elevation. The MSI has no setup wizard: Windows Installer shows its standard progress window.
 

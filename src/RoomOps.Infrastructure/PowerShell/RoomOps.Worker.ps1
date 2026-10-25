@@ -12,6 +12,7 @@
         device-code instructions) is not part of the protocol and is treated as diagnostic text by the host.
       * "invoke-many" runs one Get- command for several parameter sets, a few at a time, in runspaces that import the
         connected session's module and so share its connection. Each parameter set is checked like a single "invoke".
+        While it runs, a "progress" frame with the request id reports every completed item.
 
     Safety
       * Only commands and parameters in $Allowlist can be invoked. Parameters are bound by name through splatting;
@@ -322,7 +323,13 @@ function Invoke-AllowedMany([System.Collections.IDictionary] $Request) {
     $throttle = [Math]::Clamp([int]$Request['throttle'], 1, 8)
     $module = if ($throttle -gt 1 -and $items.Count -gt 1) { Get-ServiceModulePath } else { $null }
 
-    $results = if ($module) {
+    $results = [System.Collections.Generic.List[object]]::new()
+    $id = $Request['id']
+    $collect = {
+        $results.Add($_)
+        Write-Frame ([ordered]@{ id = $id; ok = $true; type = 'progress'; completed = $results.Count; total = $items.Count })
+    }
+    if ($module) {
         $convert = ${function:ConvertTo-RoValue}.ToString()
         $itemScript = $script:BatchItemScript
         $items | ForEach-Object -ThrottleLimit $throttle -Parallel {
@@ -337,10 +344,10 @@ function Invoke-AllowedMany([System.Collections.IDictionary] $Request) {
                 return [pscustomobject]@{ Index = $item.Index; Result = [ordered]@{ ok = $false; data = @(); warnings = @(); error = $failure } }
             }
             & ([scriptblock]::Create($using:itemScript)) $item $using:name
-        }
+        } | ForEach-Object $collect
     } else {
         $runItem = [scriptblock]::Create($script:BatchItemScript)
-        foreach ($item in $items) { & $runItem $item $name }
+        $items | ForEach-Object { & $runItem $_ $name } | ForEach-Object $collect
     }
     return , @($results | Sort-Object Index | ForEach-Object { $_.Result })
 }
