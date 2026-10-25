@@ -958,6 +958,7 @@ export interface RoomSummary {
   maximumDurationInMinutes: number | null;
   configurationLoadedAt: string | null;
   timeZone: string | null;
+  workingHours: WorkingHoursConfig | null;
   findings: FindingCounts;
   isDirSynced: boolean;
   mtrEnabled: boolean | null;

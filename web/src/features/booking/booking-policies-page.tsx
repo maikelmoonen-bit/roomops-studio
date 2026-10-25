@@ -1,5 +1,4 @@
-import { useBridgeQuery } from "@/bridge/hooks";
-import type { BookingMode } from "@/bridge/contracts.gen";
+import type { BookingMode, RoomSummary } from "@/bridge/contracts.gen";
 
 import { navigate } from "@/lib/router";
 import { Card, CardHeader } from "@/components/ui/core";
@@ -11,9 +10,8 @@ import { t, tn } from "@/lib/i18n";
 
 const order: (BookingMode | "NotRead")[] = ["Automatic", "Restricted", "DelegateApproval", "Hybrid", "Custom", "ManualAutoUpdate", "Reserved", "ProcessingDisabled", "NotRead"];
 
-function Overview() {
-  const rooms = useBridgeQuery("rooms.list", { refresh: false });
-  const groups = order.map((mode) => ({ mode, rooms: (rooms.data?.rooms ?? []).filter((r) => (r.bookingMode ?? "NotRead") === mode) })).filter((g) => g.rooms.length > 0);
+function Overview({ rooms }: { rooms: RoomSummary[] }) {
+  const groups = order.map((mode) => ({ mode, rooms: rooms.filter((r) => (r.bookingMode ?? "NotRead") === mode) })).filter((g) => g.rooms.length > 0);
   return (
     <div className="space-y-3">
       <Card className="px-5 py-4">
@@ -35,7 +33,6 @@ function Overview() {
           </ul>
         </Card>
       ))}
-      {rooms.data && groups.length === 0 && <EmptyState title={t("No rooms")} />}
     </div>
   );
 }
@@ -44,12 +41,7 @@ export default function BookingPoliciesPage({ roomId }: { roomId?: string }) {
   return (
     <div>
       <PageHeader title={t("Booking policies")} description={t("Design how each room accepts, forwards or declines meeting requests — with a plain-language summary that follows every change.")} />
-      <RoomMasterDetail
-        basePath="/booking"
-        roomId={roomId}
-        meta={(r) => (r.bookingModeLabel ? `${r.bookingModeLabel}${r.bookingWindowInDays != null ? ` · ${r.bookingWindowInDays} d` : ""}` : t("Booking policy not read"))}
-        empty={<Overview />}
-      >
+      <RoomMasterDetail basePath="/booking" roomId={roomId} overview={(rooms) => <Overview rooms={rooms} />}>
         {(detail, refetch) => detail.booking ? <PolicyDesigner detail={detail} onApplied={refetch} /> : <Card><EmptyState title={t("The booking policy could not be read")} description={detail.loadErrors.join(" ")} /></Card>}
       </RoomMasterDetail>
     </div>

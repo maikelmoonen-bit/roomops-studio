@@ -10,6 +10,8 @@
       * Requests arrive on stdin, one JSON object per line, and must carry the session nonce.
       * Responses are written to stdout as single lines: "@@RO1:<nonce>:<json>". Any other output (module banners,
         device-code instructions) is not part of the protocol and is treated as diagnostic text by the host.
+      * "invoke-many" runs one Get- command for several parameter sets, a few at a time, in runspaces that import the
+        connected session's module and so share its connection. Each parameter set is checked like a single "invoke".
 
     Safety
       * Only commands and parameters in $Allowlist can be invoked. Parameters are bound by name through splatting;
@@ -59,7 +61,8 @@ $Allowlist = @{
     Exchange = @{
         'Get-ConnectionInformation'        = @()
         'Get-EXOMailbox'                   = @('Identity', 'RecipientTypeDetails', 'ResultSize', 'Properties')
-        'Get-EXORecipient'                 = @('Identity', 'Anr', 'RecipientTypeDetails', 'ResultSize', 'Properties')
+        'Get-EXORecipient'                 = @('Identity', 'RecipientTypeDetails', 'ResultSize', 'Properties')
+        'Get-Recipient'                    = @('Anr', 'RecipientTypeDetails', 'ResultSize')
         'Get-EXOMailboxPermission'         = @('Identity', 'ResultSize')
         'Get-EXORecipientPermission'       = @('Identity', 'ResultSize')
         'Get-CalendarProcessing'           = @('Identity')
@@ -98,7 +101,9 @@ $ModuleName = @{ Exchange = 'ExchangeOnlineManagement'; Places = 'MicrosoftPlace
 
 # ---------------------------------------------------------------------------------------------------------------- Output
 function Write-Frame([System.Collections.IDictionary] $Frame) {
-    $json = ConvertTo-Json -InputObject $Frame -Depth 12 -Compress
+    # On Windows, redirected stdout uses the console's OEM code page (e.g. 850), not UTF-8. Escaping every non-ASCII character
+    # keeps names such as "Entrepôt" intact whatever that code page is.
+    $json = ConvertTo-Json -InputObject $Frame -Depth 12 -Compress -EscapeHandling EscapeNonAscii
     # A leading newline guarantees the frame starts on its own line even if a module left a partial line on stdout.
     $script:Out.Write("`n" + $script:Prefix + $json + "`n")
     $script:Out.Flush()
@@ -236,19 +241,26 @@ function Invoke-Disconnect {
     } catch { }
 }
 
-function Invoke-Allowed([System.Collections.IDictionary] $Request) {
-    $name = [string]$Request['command']
-    $allowed = $Allowlist[$script:Service][$name]
-    if ($null -eq $allowed) { throw [System.UnauthorizedAccessException]::new("Command '$name' is not allowed for $($script:Service).") }
+function Get-AllowedParameters([string] $Name) {
+    $allowed = $Allowlist[$script:Service][$Name]
+    if ($null -eq $allowed) { throw [System.UnauthorizedAccessException]::new("Command '$Name' is not allowed for $($script:Service).") }
+    return , $allowed
+}
 
+function ConvertTo-RoSplat([string] $Name, [string[]] $Allowed, $Parameters) {
     $splat = @{}
-    $parameters = $Request['parameters']
-    if ($parameters) {
-        foreach ($key in $parameters.Keys) {
-            if ($allowed -notcontains $key) { throw [System.UnauthorizedAccessException]::new("Parameter '$key' is not allowed for $name.") }
-            $splat[$key] = ConvertTo-RoParameter $parameters[$key]
+    if ($Parameters) {
+        foreach ($key in $Parameters.Keys) {
+            if ($Allowed -notcontains $key) { throw [System.UnauthorizedAccessException]::new("Parameter '$key' is not allowed for $Name.") }
+            $splat[$key] = ConvertTo-RoParameter $Parameters[$key]
         }
     }
+    return $splat
+}
+
+function Invoke-Allowed([System.Collections.IDictionary] $Request) {
+    $name = [string]$Request['command']
+    $splat = ConvertTo-RoSplat $name (Get-AllowedParameters $name) $Request['parameters']
     if ($name -eq 'Invoke-MgGraphRequest' -and [string]$splat['Method'] -cne 'GET') {
         throw [System.UnauthorizedAccessException]::new('Only GET requests are allowed for Microsoft Graph.')
     }
@@ -269,6 +281,68 @@ function Invoke-Allowed([System.Collections.IDictionary] $Request) {
         }
     }
     return @{ data = $data; warnings = $warnings }
+}
+
+function Get-ServiceModulePath {
+    # Batch runspaces import the module that holds the connected session's commands; importing it attaches them to the same
+    # connection. Without one, a batch runs one item at a time in this runspace.
+    if ($script:TestModule) { return $script:TestModule }
+    if ($script:Service -ne 'Exchange') { return $null }
+    $info = @(Get-ConnectionInformation | Where-Object { $_.State -eq 'Connected' }) | Select-Object -First 1
+    if ($info -and $info.PSObject.Properties['ModuleName'] -and $info.ModuleName -and (Test-Path -LiteralPath $info.ModuleName)) { return [string]$info.ModuleName }
+    return $null
+}
+
+# Runs one batch item. Defined as text so parallel runspaces can recreate it; it needs ConvertTo-RoValue in scope.
+$script:BatchItemScript = @'
+param($Item, [string] $Name)
+try {
+    # Resolve to a module command (cmdlet or function). Aliases and external scripts are never executed.
+    $command = Get-Command -Name $Name -CommandType Cmdlet, Function -ErrorAction Stop | Select-Object -First 1
+    $splat = $Item.Splat
+    $output = & $command @splat -WarningVariable itemWarnings -WarningAction SilentlyContinue -ErrorAction Stop
+    $data = @(foreach ($o in @($output)) { if ($null -ne $o) { ConvertTo-RoValue $o 0 } })
+    [pscustomobject]@{ Index = $Item.Index; Result = [ordered]@{ ok = $true; data = $data; warnings = @($itemWarnings | ForEach-Object { [string]$_ }) } }
+} catch {
+    $category = if ($_.CategoryInfo) { [string]$_.CategoryInfo.Category } else { '' }
+    $failure = [ordered]@{ message = [string]$_.Exception.Message; errorId = [string]$_.FullyQualifiedErrorId; category = $category }
+    [pscustomobject]@{ Index = $Item.Index; Result = [ordered]@{ ok = $false; data = @(); warnings = @(); error = $failure } }
+}
+'@
+
+function Invoke-AllowedMany([System.Collections.IDictionary] $Request) {
+    $name = [string]$Request['command']
+    $allowed = Get-AllowedParameters $name
+    # Only reads run as a batch: they are independent of each other and safe to run concurrently.
+    if (-not $name.StartsWith('Get-', [System.StringComparison]::Ordinal)) { throw [System.UnauthorizedAccessException]::new("Command '$name' is not allowed in a batch.") }
+    $items = [System.Collections.Generic.List[object]]::new()
+    foreach ($parameters in @($Request['items'])) {
+        $items.Add([pscustomobject]@{ Index = $items.Count; Splat = (ConvertTo-RoSplat $name $allowed $parameters) })
+    }
+    $throttle = [Math]::Clamp([int]$Request['throttle'], 1, 8)
+    $module = if ($throttle -gt 1 -and $items.Count -gt 1) { Get-ServiceModulePath } else { $null }
+
+    $results = if ($module) {
+        $convert = ${function:ConvertTo-RoValue}.ToString()
+        $itemScript = $script:BatchItemScript
+        $items | ForEach-Object -ThrottleLimit $throttle -Parallel {
+            $item = $_
+            $ProgressPreference = 'SilentlyContinue'
+            $InformationPreference = 'SilentlyContinue'
+            ${function:ConvertTo-RoValue} = [scriptblock]::Create($using:convert)
+            try {
+                Import-Module -Name $using:module -DisableNameChecking -WarningAction SilentlyContinue -ErrorAction Stop
+            } catch {
+                $failure = [ordered]@{ message = "The session module could not be loaded for parallel reads: $($_.Exception.Message)"; errorId = ''; category = '' }
+                return [pscustomobject]@{ Index = $item.Index; Result = [ordered]@{ ok = $false; data = @(); warnings = @(); error = $failure } }
+            }
+            & ([scriptblock]::Create($using:itemScript)) $item $using:name
+        }
+    } else {
+        $runItem = [scriptblock]::Create($script:BatchItemScript)
+        foreach ($item in $items) { & $runItem $item $name }
+    }
+    return , @($results | Sort-Object Index | ForEach-Object { $_.Result })
 }
 
 # ---------------------------------------------------------------------------------------------------------------- Main loop
@@ -298,6 +372,10 @@ while ($true) {
             'invoke' {
                 $result = Invoke-Allowed $request
                 Write-Frame ([ordered]@{ id = $id; ok = $true; data = $result.data; warnings = $result.warnings; ms = $started.ElapsedMilliseconds })
+            }
+            'invoke-many' {
+                $results = Invoke-AllowedMany $request
+                Write-Frame ([ordered]@{ id = $id; ok = $true; data = $results; warnings = @(); ms = $started.ElapsedMilliseconds })
             }
             'disconnect' {
                 Invoke-Disconnect

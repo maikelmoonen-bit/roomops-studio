@@ -14,6 +14,9 @@ public sealed record FolderPermission(string User, string? UserSmtp, IReadOnlyLi
 public sealed record CalendarFolder(string Name, string Identity);
 
 /// <summary>A Full Access or Send As entry. <paramref name="DisplayName"/> and <paramref name="PrimarySmtpAddress"/> are filled when the trustee resolves.</summary>
+/// <summary>The result of reading one mailbox in a batch: a value, or the error that mailbox alone ran into.</summary>
+public sealed record ReadOutcome<T>(T? Value, RoomOpsException? Error) where T : class;
+
 public sealed record MailboxAccessEntry(string Trustee, string Right, bool IsInherited, string? DisplayName = null, string? PrimarySmtpAddress = null);
 
 /// <summary>Typed reads against Exchange Online. All calls go through the session's Exchange runner (worker or demo tenant).</summary>
@@ -77,13 +80,33 @@ public sealed class ExchangeGateway(ISessionManager sessions)
     public async Task<BookingPolicy> GetBookingPolicyAsync(string identity, CancellationToken ct)
     {
         var result = await Run(PsCommand.Create("Get-CalendarProcessing", ("Identity", identity)), ct);
-        if (result.Objects.Count == 0)
-        {
-            throw RoomOpsException.NotFound("booking.notFound", Text.L($"Calendar processing for '{identity}' was not returned.", $"De agendaverwerking voor '{identity}' is niet geretourneerd."));
-        }
+        if (result.Objects.Count == 0) throw BookingNotFound(identity);
         var policy = MapBookingPolicy(result.Objects[0]);
         return await ResolveRecipientsAsync(policy, ct);
     }
+
+    /// <summary>Reads calendar processing of several mailboxes, up to <paramref name="parallelism"/> at a time. Results keep the input order.</summary>
+    public async Task<IReadOnlyList<ReadOutcome<BookingPolicy>>> GetBookingPoliciesAsync(IReadOnlyList<string> identities, int parallelism, CancellationToken ct)
+    {
+        var results = await RunMany("Get-CalendarProcessing", identities, parallelism, ct);
+        var outcomes = new List<ReadOutcome<BookingPolicy>>(results.Count);
+        for (var i = 0; i < results.Count; i++)
+        {
+            outcomes.Add(results[i] switch
+            {
+                { Error: { } error } => new(null, error),
+                { Result.Objects.Count: > 0 } r => new(await ResolveRecipientsAsync(MapBookingPolicy(r.Result.Objects[0]), ct), null),
+                _ => new(null, BookingNotFound(identities[i])),
+            });
+        }
+        return outcomes;
+    }
+
+    private static RoomOpsException BookingNotFound(string identity) =>
+        RoomOpsException.NotFound("booking.notFound", Text.L($"Calendar processing for '{identity}' was not returned.", $"De agendaverwerking voor '{identity}' is niet geretourneerd."));
+
+    private Task<IReadOnlyList<BatchItemResult>> RunMany(string command, IReadOnlyList<string> identities, int parallelism, CancellationToken ct) =>
+        sessions.Runner(ServiceKind.Exchange).RunManyAsync(identities.Select(i => PsCommand.Create(command, ("Identity", i))).ToList(), parallelism, ct);
 
     public static BookingPolicy MapBookingPolicy(JsonObject o)
     {
@@ -188,13 +211,17 @@ public sealed class ExchangeGateway(ISessionManager sessions)
         };
     }
 
-    /// <summary>Ambiguous name resolution search, used by recipient pickers. The query is bound to -Anr, never interpolated into a filter.</summary>
+    /// <summary>
+    /// Ambiguous name resolution search, used by recipient pickers. The query is bound to -Anr, never interpolated into a filter.
+    /// Get-Recipient, not Get-EXORecipient: ExchangeOnlineManagement 3.10 ignores -Anr on Get-EXORecipient and returns the first
+    /// recipients by name for any query.
+    /// </summary>
     public async Task<IReadOnlyList<Recipient>> SearchRecipientsAsync(string query, IReadOnlyList<string>? recipientTypeDetails, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(query) || query.Trim().Length < 2) return [];
-        var parameters = new List<(string, object?)> { ("Anr", query.Trim()), ("ResultSize", "50"), ("Properties", RecipientProperties) };
+        var parameters = new List<(string, object?)> { ("Anr", query.Trim()), ("ResultSize", "50") };
         if (recipientTypeDetails is { Count: > 0 }) parameters.Add(("RecipientTypeDetails", recipientTypeDetails.ToArray()));
-        var result = await Run(PsCommand.Create("Get-EXORecipient", [.. parameters]), ct);
+        var result = await Run(PsCommand.Create("Get-Recipient", [.. parameters]), ct);
         return result.Objects
             .Select(o => new Recipient(
                 o.Str("ExternalDirectoryObjectId") ?? o.Str("Guid") ?? o.StrOr("PrimarySmtpAddress", string.Empty),
@@ -222,12 +249,24 @@ public sealed class ExchangeGateway(ISessionManager sessions)
     public async Task<WorkingHoursConfig> GetWorkingHoursAsync(string identity, CancellationToken ct)
     {
         var result = await Run(PsCommand.Create("Get-MailboxCalendarConfiguration", ("Identity", identity)), ct);
-        if (result.Objects.Count == 0)
-        {
-            throw RoomOpsException.NotFound("workingHours.notFound", Text.L($"Calendar configuration for '{identity}' was not returned.", $"De agendaconfiguratie voor '{identity}' is niet geretourneerd."));
-        }
+        if (result.Objects.Count == 0) throw WorkingHoursNotFound(identity);
         return MapWorkingHours(result.Objects[0]);
     }
+
+    /// <summary>Reads working hours of several mailboxes, up to <paramref name="parallelism"/> at a time. Results keep the input order.</summary>
+    public async Task<IReadOnlyList<ReadOutcome<WorkingHoursConfig>>> GetWorkingHoursAsync(IReadOnlyList<string> identities, int parallelism, CancellationToken ct)
+    {
+        var results = await RunMany("Get-MailboxCalendarConfiguration", identities, parallelism, ct);
+        return results.Select((r, i) => r switch
+        {
+            { Error: { } error } => new ReadOutcome<WorkingHoursConfig>(null, error),
+            { Result.Objects.Count: > 0 } => new(MapWorkingHours(r.Result.Objects[0]), null),
+            _ => new(null, WorkingHoursNotFound(identities[i])),
+        }).ToList();
+    }
+
+    private static RoomOpsException WorkingHoursNotFound(string identity) =>
+        RoomOpsException.NotFound("workingHours.notFound", Text.L($"Calendar configuration for '{identity}' was not returned.", $"De agendaconfiguratie voor '{identity}' is niet geretourneerd."));
 
     public static WorkingHoursConfig MapWorkingHours(JsonObject o) => new(
         WorkingHoursConfig.ParseWorkDays(o.Str("WorkDays")),

@@ -38,7 +38,7 @@ Settings that already have the requested value are reported as **No change requi
 
 The dashboard shows the room count, room lists, buildings, validation findings and changes made in the last seven days. **Configuration readiness** lists common gaps; select a row to open the matching rooms.
 
-Metrics that depend on booking policies only count rooms whose configuration has been read. To read every room, choose **Run scan**. The scan reads each room in turn and changes nothing.
+Metrics that depend on booking policies only count rooms whose configuration has been read. To read every room, choose **Run scan**. The scan reads several rooms at a time over your existing connection and changes nothing.
 
 ## Rooms
 

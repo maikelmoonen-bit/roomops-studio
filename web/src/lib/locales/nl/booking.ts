@@ -52,7 +52,6 @@ export const booking: Record<string, string> = {
   "Open to read": "Openen om te lezen",
   "No rooms": "Geen ruimtes",
   "Design how each room accepts, forwards or declines meeting requests — with a plain-language summary that follows every change.": "Bepaal hoe elke ruimte vergaderverzoeken accepteert, doorstuurt of weigert — met een samenvatting in begrijpelijke taal die elke wijziging volgt.",
-  "Booking policy not read": "Boekingsbeleid niet gelezen",
   "The booking policy could not be read": "Het boekingsbeleid kon niet worden gelezen",
   "Jump to this setting": "Naar deze instelling",
   "No effect without AutoAccept": "Geen effect zonder AutoAccept",

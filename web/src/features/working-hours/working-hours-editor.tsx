@@ -109,7 +109,7 @@ export function WorkingHoursEditor({ roomId, roomName, current, scheduleOnlyDuri
                   className={cn("flex h-9 w-[92px] shrink-0 items-center justify-between rounded-sm border px-2.5 text-[12.5px] font-medium transition-colors", on ? "border-accent bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] text-ink" : "border-line text-ink-3 hover:text-ink")}
                 >
                   {shortDay(day)}
-                  <span className="text-[10.5px] font-normal">{on ? t("Open") : t("Closed")}</span>
+                  <span className="text-[10.5px] font-normal">{on ? t("Workday") : t("Closed")}</span>
                 </button>
                 <div ref={index === 0 ? track : undefined} className="blueprint relative h-9 flex-1 rounded-sm border border-line bg-sunken/40" style={{ backgroundSize: `${100 / 24}% 100%` }}>
                   {on && (

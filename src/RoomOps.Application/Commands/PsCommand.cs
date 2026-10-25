@@ -41,7 +41,8 @@ public static class CommandCatalog
         // Exchange Online — reads
         new(ServiceKind.Exchange, "Get-ConnectionInformation", CommandEffect.Read, P(), "Session tenant and account"),
         new(ServiceKind.Exchange, "Get-EXOMailbox", CommandEffect.Read, P("Identity", "RecipientTypeDetails", "ResultSize", "Properties"), "Room mailbox inventory"),
-        new(ServiceKind.Exchange, "Get-EXORecipient", CommandEffect.Read, P("Identity", "Anr", "RecipientTypeDetails", "ResultSize", "Properties"), "Recipient resolution and search"),
+        new(ServiceKind.Exchange, "Get-EXORecipient", CommandEffect.Read, P("Identity", "RecipientTypeDetails", "ResultSize", "Properties"), "Recipient resolution"),
+        new(ServiceKind.Exchange, "Get-Recipient", CommandEffect.Read, P("Anr", "RecipientTypeDetails", "ResultSize"), "Recipient search (ambiguous name resolution)"),
         new(ServiceKind.Exchange, "Get-EXOMailboxPermission", CommandEffect.Read, P("Identity", "ResultSize"), "Mailbox Full Access (read-only)"),
         new(ServiceKind.Exchange, "Get-EXORecipientPermission", CommandEffect.Read, P("Identity", "ResultSize"), "Send As (read-only)"),
         new(ServiceKind.Exchange, "Get-CalendarProcessing", CommandEffect.Read, P("Identity"), "Booking policy"),
@@ -211,11 +212,29 @@ public sealed class PsCommand
 
 public sealed record CommandResult(IReadOnlyList<System.Text.Json.Nodes.JsonObject> Objects, IReadOnlyList<string> Warnings, TimeSpan Duration);
 
+/// <summary>One command of a batch: its result, or the failure of that command alone.</summary>
+public sealed record BatchItemResult(CommandResult? Result, CommandFailedException? Error);
+
 /// <summary>Executes catalog commands for one service. Live sessions use an isolated PowerShell worker; demo sessions use the in-memory tenant.</summary>
 public interface ICommandRunner
 {
     ServiceKind Service { get; }
     Task<CommandResult> RunAsync(PsCommand command, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Runs independent invocations of one read command, up to <paramref name="parallelism"/> at a time where the runner supports it.
+    /// Results keep the order of <paramref name="commands"/>; a failing command does not stop the others.
+    /// </summary>
+    async Task<IReadOnlyList<BatchItemResult>> RunManyAsync(IReadOnlyList<PsCommand> commands, int parallelism, CancellationToken cancellationToken)
+    {
+        var results = new List<BatchItemResult>(commands.Count);
+        foreach (var command in commands)
+        {
+            try { results.Add(new(await RunAsync(command, cancellationToken), null)); }
+            catch (CommandFailedException ex) { results.Add(new(null, ex)); }
+        }
+        return results;
+    }
 }
 
 /// <summary>A command failed in the service. <see cref="Kind"/> drives retry and the explanation shown to the administrator.</summary>

@@ -53,6 +53,7 @@ internal sealed partial class DemoCommandRunner(ServiceKind service, DemoTenant 
                 "Get-ConnectionInformation" => [new JsonObject { ["State"] = "Connected", ["TenantID"] = DemoTenant.TenantId, ["UserPrincipalName"] = DemoTenant.AdminAccount, ["TokenStatus"] = "Active" }],
                 "Get-EXOMailbox" => GetMailbox(command),
                 "Get-EXORecipient" => GetRecipient(command),
+                "Get-Recipient" => GetRecipients(command).Select(tenant.RecipientJson).ToList(),
                 "Get-EXOMailboxPermission" => MailboxPermission(command),
                 "Get-EXORecipientPermission" => [new JsonObject { ["Identity"] = Find(command, Str(command, "Identity")).Name, ["Trustee"] = "NT AUTHORITY\\SELF", ["AccessRights"] = new JsonArray("SendAs"), ["IsInherited"] = false }],
                 "Get-CalendarProcessing" => [PolicyJson(Find(command, Str(command, "Identity"), resource: true))],

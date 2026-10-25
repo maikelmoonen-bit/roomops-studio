@@ -238,6 +238,47 @@ public sealed partial class PowerShellWorker : IServiceWorker
         {
             throw new InvalidOperationException($"{command.Name} belongs to {command.Service}, not {_service}.");
         }
+        var sw = Stopwatch.StartNew();
+        var response = await SendAsync("invoke", new JsonObject { ["command"] = command.Name, ["parameters"] = ToParameters(command) }, _options.CommandTimeout, cancellationToken);
+        return new CommandResult(ToObjects(response["data"]), ToWarnings(response["warnings"]), sw.Elapsed);
+    }
+
+    /// <summary>
+    /// Runs one read command for many parameter sets in a single request. The worker runs up to <paramref name="parallelism"/> of them
+    /// at a time in runspaces that share this process's Microsoft 365 connection.
+    /// </summary>
+    public async Task<IReadOnlyList<BatchItemResult>> RunManyAsync(IReadOnlyList<PsCommand> commands, int parallelism, CancellationToken cancellationToken)
+    {
+        if (commands.Count == 0) return [];
+        var name = commands[0].Name;
+        if (commands.Any(c => c.Name != name || c.Service != _service || c.Effect != CommandEffect.Read))
+        {
+            throw new ArgumentException($"A batch runs a single read command of {_service}.", nameof(commands));
+        }
+        var sw = Stopwatch.StartNew();
+        var payload = new JsonObject
+        {
+            ["command"] = name,
+            ["items"] = new JsonArray(commands.Select(c => (JsonNode?)ToParameters(c)).ToArray()),
+            ["throttle"] = Math.Clamp(parallelism, 1, MaxParallelism),
+        };
+        var response = await SendAsync("invoke-many", payload, _options.CommandTimeout, cancellationToken);
+        var items = response["data"] as JsonArray ?? [];
+        if (items.Count != commands.Count)
+        {
+            throw new CommandFailedException(name, ErrorKind.Internal, Text.L($"The worker returned {items.Count} results for {commands.Count} requests.", $"Het proces gaf {items.Count} resultaten voor {commands.Count} verzoeken."));
+        }
+        return items.Select(item => item?["ok"]?.GetValue<bool>() == true
+                ? new BatchItemResult(new CommandResult(ToObjects(item["data"]), ToWarnings(item["warnings"]), sw.Elapsed), null)
+                : new BatchItemResult(null, Failure(name, item?["error"] as JsonObject, connect: false)))
+            .ToList();
+    }
+
+    /// <summary>Upper bound for parallel invocations in one worker; Exchange Online throttles beyond a handful of concurrent requests.</summary>
+    public const int MaxParallelism = 8;
+
+    private static JsonObject ToParameters(PsCommand command)
+    {
         var parameters = new JsonObject();
         foreach (var (key, value) in command.Parameters)
         {
@@ -249,28 +290,44 @@ public sealed partial class PowerShellWorker : IServiceWorker
                 _ => JsonSerializer.SerializeToNode(value),
             };
         }
-        var sw2 = Stopwatch.StartNew();
-        var response = await SendAsync("invoke", new JsonObject { ["command"] = command.Name, ["parameters"] = parameters }, _options.CommandTimeout, cancellationToken);
-        var objects = new List<JsonObject>();
-        if (response["data"] is JsonArray data)
-        {
-            foreach (var item in data)
+        return parameters;
+    }
+
+    private static List<JsonObject> ToObjects(JsonNode? data) =>
+        data is JsonArray array
+            ? array.Select(item => item switch
             {
-                objects.Add(item switch
-                {
-                    JsonObject obj => obj,
-                    null => new JsonObject(),
-                    _ => new JsonObject { ["Value"] = item.DeepClone() },
-                });
-            }
+                JsonObject obj => obj,
+                null => new JsonObject(),
+                _ => new JsonObject { ["Value"] = item.DeepClone() },
+            }).ToList()
+            : [];
+
+    private static List<string> ToWarnings(JsonNode? warnings) =>
+        warnings is JsonArray w ? w.Select(x => x?.ToString() ?? string.Empty).Where(x => x.Length > 0).ToList() : [];
+
+    private static CommandFailedException Failure(string commandName, JsonObject? error, bool connect)
+    {
+        var message = Sanitize(error?["message"]?.ToString() ?? Text.L("Unknown error", "Onbekende fout"));
+        var errorId = error?["errorId"]?.ToString();
+        var category = error?["category"]?.ToString();
+        var kind = connect && ErrorClassifier.Classify(message, errorId, category) == ErrorKind.Internal
+            ? ErrorKind.Authentication
+            : ErrorClassifier.Classify(message, errorId, category);
+        if (message.Contains("is not allowed", StringComparison.Ordinal) || message.Contains("not authenticated", StringComparison.Ordinal))
+        {
+            kind = ErrorKind.PermissionDenied;
         }
-        var warnings = response["warnings"] is JsonArray w ? w.Select(x => x?.ToString() ?? string.Empty).Where(x => x.Length > 0).ToList() : [];
-        return new CommandResult(objects, warnings, sw2.Elapsed);
+        return new CommandFailedException(commandName, kind, message, errorId);
     }
 
     /// <summary>Test hook: sends a request that bypasses the .NET catalog so the worker's own allowlist and nonce checks can be verified.</summary>
     internal Task<JsonObject> InvokeUncheckedAsync(string command, JsonObject parameters, string? nonce = null) =>
         SendAsync("invoke", new JsonObject { ["command"] = command, ["parameters"] = parameters }, _options.CommandTimeout, CancellationToken.None, nonce);
+
+    /// <summary>Test hook: sends a batch request that bypasses the .NET catalog so the worker's own checks can be verified.</summary>
+    internal Task<JsonObject> InvokeManyUncheckedAsync(string command, JsonArray items) =>
+        SendAsync("invoke-many", new JsonObject { ["command"] = command, ["items"] = items, ["throttle"] = 2 }, _options.CommandTimeout, CancellationToken.None);
 
     /// <summary>Test hook: simulates a crashed worker process.</summary>
     internal void KillForTests() => _process?.Kill(entireProcessTree: true);
@@ -308,19 +365,7 @@ public sealed partial class PowerShellWorker : IServiceWorker
             }
 
             if (response["ok"]?.GetValue<bool>() == true) return response;
-            var error = response["error"] as JsonObject;
-            var message = Sanitize(error?["message"]?.ToString() ?? Text.L("Unknown error", "Onbekende fout"));
-            var errorId = error?["errorId"]?.ToString();
-            var category = error?["category"]?.ToString();
-            var commandName = payload["command"]?.ToString() ?? op;
-            var kind = op == "connect" && ErrorClassifier.Classify(message, errorId, category) == ErrorKind.Internal
-                ? ErrorKind.Authentication
-                : ErrorClassifier.Classify(message, errorId, category);
-            if (message.Contains("is not allowed", StringComparison.Ordinal) || message.Contains("not authenticated", StringComparison.Ordinal))
-            {
-                kind = ErrorKind.PermissionDenied;
-            }
-            throw new CommandFailedException(commandName, kind, message, errorId);
+            throw Failure(payload["command"]?.ToString() ?? op, response["error"] as JsonObject, connect: op == "connect");
         }
         finally
         {

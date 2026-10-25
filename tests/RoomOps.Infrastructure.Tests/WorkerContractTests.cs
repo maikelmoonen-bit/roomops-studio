@@ -81,6 +81,16 @@ public sealed class WorkerContractTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Non_ascii_text_survives_the_round_trip()
+    {
+        Assert.SkipWhen(Pwsh is null, "PowerShell 7 is not installed.");
+        // On Windows the worker's stdout uses the console's OEM code page; frames must not depend on it.
+        const string name = "ANTW-02-Meetingroom Entrepôt – Liège ✓";
+        var result = await Worker.RunAsync(PsCommand.Create("Set-CalendarProcessing", ("Identity", "a@fake.example"), ("AdditionalResponse", name)), CancellationToken.None);
+        Assert.Equal(name, Assert.Single(result.Objects)["ReceivedResponse"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task Switch_parameters_bind_including_explicit_false()
     {
         Assert.SkipWhen(Pwsh is null, "PowerShell 7 is not installed.");
@@ -111,6 +121,30 @@ public sealed class WorkerContractTests : IAsyncLifetime
         Assert.Contains("not allowed", badParameter.Message, StringComparison.Ordinal);
         var structured = await Assert.ThrowsAsync<CommandFailedException>(() => Worker.InvokeUncheckedAsync("Get-EXOMailbox", new JsonObject { ["Identity"] = new JsonObject { ["Script"] = "x" } }));
         Assert.Contains("not accepted", structured.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Batches_run_in_parallel_runspaces_and_report_each_item()
+    {
+        Assert.SkipWhen(Pwsh is null, "PowerShell 7 is not installed.");
+        var commands = new[] { "a@fake.example", "missing@fake.example", "a@fake.example" }
+            .Select(id => PsCommand.Create("Get-EXOMailbox", ("Identity", id), ("Properties", new[] { "ResourceCapacity" })))
+            .ToList();
+        var results = await Worker.RunManyAsync(commands, 3, CancellationToken.None);
+        Assert.Equal(3, results.Count);
+        Assert.Equal(8, Assert.Single(results[0].Result!.Objects)["ResourceCapacity"]!.GetValue<int>());
+        Assert.Equal(ErrorKind.NotFound, results[1].Error!.Kind); // one failing item doesn't fail the batch
+        Assert.Equal("Room A", Assert.Single(results[2].Result!.Objects)["DisplayName"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task Batches_are_limited_to_allowlisted_reads()
+    {
+        Assert.SkipWhen(Pwsh is null, "PowerShell 7 is not installed.");
+        var write = await Assert.ThrowsAsync<CommandFailedException>(() => Worker.InvokeManyUncheckedAsync("Set-CalendarProcessing", [new JsonObject { ["Identity"] = "a@fake.example" }]));
+        Assert.Equal(ErrorKind.PermissionDenied, write.Kind);
+        var badParameter = await Assert.ThrowsAsync<CommandFailedException>(() => Worker.InvokeManyUncheckedAsync("Get-EXOMailbox", [new JsonObject { ["Identity"] = "a@fake.example" }, new JsonObject { ["Filter"] = "*" }]));
+        Assert.Contains("not allowed", badParameter.Message, StringComparison.Ordinal);
     }
 
     [Fact]

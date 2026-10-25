@@ -3,6 +3,7 @@ using RoomOps.Application.Abstractions;
 using RoomOps.Application.Execution;
 using RoomOps.Application.Gateways;
 using RoomOps.Application.Services;
+using RoomOps.Application.Sessions;
 using RoomOps.Domain.Booking;
 using RoomOps.Domain.Changes;
 using RoomOps.Domain.Common;
@@ -282,13 +283,34 @@ public class ChangePipelineTests
     }
 
     [Fact]
-    public async Task Recipient_search_requests_display_name_and_address()
+    public async Task Recipient_search_finds_people_by_name()
     {
         await using var backend = await TestBackend.StartDemoAsync();
-        // Get-EXORecipient leaves both out of its default property set; without them every result was discarded.
+        // Uses Get-Recipient -Anr: on a live tenant, Get-EXORecipient ignored -Anr and returned the first 50 recipients by name.
         var found = Assert.Single(await backend.Get<DelegatesService>().SearchRecipientsAsync("julia", null, None));
         Assert.Equal("Julia Meijer", found.DisplayName);
         Assert.Equal("julia.meijer@contoso-demo.example", found.PrimarySmtpAddress);
+    }
+
+    [Fact]
+    public async Task Configuration_scan_reads_every_room_in_chunks_and_keeps_each_result_with_its_room()
+    {
+        await using var backend = await TestBackend.StartDemoAsync();
+        var rooms = await backend.Get<InventoryService>().GetMailboxesAsync(None);
+        var scan = backend.Get<ScanService>();
+        await scan.StartAsync(None);
+        var deadline = DateTime.UtcNow.AddSeconds(60);
+        while (scan.Current is { Running: true } && DateTime.UtcNow < deadline) await Task.Delay(100);
+
+        var done = scan.Current!;
+        Assert.False(done.Running);
+        Assert.Equal(rooms.Count, done.Completed);
+        Assert.Equal(0, done.Failed);
+        var cache = backend.Get<ISessionManager>().Cache;
+        Assert.All(rooms, r => Assert.True(cache.Booking.ContainsKey(r.Id) && cache.WorkingHours.ContainsKey(r.Id)));
+        var training = rooms.Single(r => r.Alias == "ehv-2.11"); // the only room whose working hours start at 07:30
+        Assert.Equal(365, cache.Booking[training.Id].Value.BookingWindowInDays);
+        Assert.Equal(new TimeOnly(7, 30), cache.WorkingHours[training.Id].Value.Start);
     }
 
     [Fact]
