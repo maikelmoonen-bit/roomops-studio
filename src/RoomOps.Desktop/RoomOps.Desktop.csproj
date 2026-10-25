@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- Allows building (not running) the Windows shell on non-Windows build agents. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RootNamespace>RoomOps.Desktop</RootNamespace>
+    <AssemblyName>RoomOpsStudio</AssemblyName>
+    <ApplicationIcon>Assets\roomops.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- CA1001: the mutex and cancellation source are released in OnExit / Closed, the WPF lifecycle equivalents of Dispose. -->
+    <NoWarn>$(NoWarn);CA1001</NoWarn>
+    <WebDist>$(MSBuildThisFileDirectory)..\..\web\dist\</WebDist>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\RoomOps.Hosting\RoomOps.Hosting.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\roomops.ico" />
+    <Resource Include="Assets\roomops-256.png" />
+  </ItemGroup>
+
+  <!-- The built frontend (web/dist) is packaged with the application and served through WebView2's virtual host mapping.
+       Build the frontend first (npm run build); the build scripts do this in order. -->
+  <ItemGroup Condition="Exists('$(WebDist)index.html')">
+    <Content Include="$(WebDist)**\*" LinkBase="wwwroot" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="RequireWebAssets" BeforeTargets="BeforeBuild" Condition="!Exists('$(WebDist)index.html')">
+    <Error Text="The frontend has not been built. Run 'npm run build' in the web folder first." />
+  </Target>
+</Project>

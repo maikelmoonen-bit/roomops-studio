@@ -1,0 +1,19 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RoomOps.Application/RoomOps.Application.csproj" />
+    <Project Path="src/RoomOps.Bridge/RoomOps.Bridge.csproj" />
+    <Project Path="src/RoomOps.Desktop/RoomOps.Desktop.csproj" />
+    <Project Path="src/RoomOps.DevHost/RoomOps.DevHost.csproj" />
+    <Project Path="src/RoomOps.Domain/RoomOps.Domain.csproj" />
+    <Project Path="src/RoomOps.Hosting/RoomOps.Hosting.csproj" />
+    <Project Path="src/RoomOps.Infrastructure/RoomOps.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RoomOps.Application.Tests/RoomOps.Application.Tests.csproj" />
+    <Project Path="tests/RoomOps.Domain.Tests/RoomOps.Domain.Tests.csproj" />
+    <Project Path="tests/RoomOps.Infrastructure.Tests/RoomOps.Infrastructure.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/RoomOps.ContractGen/RoomOps.ContractGen.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,42 @@
+<Window x:Class="RoomOps.Desktop.SplashWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="RoomOps Studio" Width="460" Height="280"
+        WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
+        WindowStartupLocation="CenterScreen" ShowInTaskbar="True" Topmost="False"
+        Icon="pack://application:,,,/Assets/roomops.ico">
+  <Border CornerRadius="14" Background="{StaticResource Graphite}" BorderBrush="{StaticResource Line}" BorderThickness="1">
+    <Grid Margin="36,32,36,28">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+      </Grid.RowDefinitions>
+      <StackPanel Orientation="Horizontal">
+        <!-- The RoomOps mark: four rooms, one active. -->
+        <Canvas Width="40" Height="40">
+          <Rectangle Width="40" Height="40" RadiusX="9" RadiusY="9" Fill="#16191E" Stroke="#2C323B" />
+          <Rectangle Canvas.Left="9" Canvas.Top="9" Width="10" Height="10" RadiusX="2.5" RadiusY="2.5" Stroke="#A3ABBB" StrokeThickness="2" />
+          <Rectangle Canvas.Left="21" Canvas.Top="9" Width="10" Height="10" RadiusX="2.5" RadiusY="2.5" Fill="#36B5F2" />
+          <Rectangle Canvas.Left="9" Canvas.Top="21" Width="10" Height="10" RadiusX="2.5" RadiusY="2.5" Stroke="#A3ABBB" StrokeThickness="2" />
+          <Rectangle Canvas.Left="21" Canvas.Top="21" Width="10" Height="10" RadiusX="2.5" RadiusY="2.5" Stroke="#A3ABBB" StrokeThickness="2" />
+        </Canvas>
+        <StackPanel Margin="14,0,0,0" VerticalAlignment="Center">
+          <TextBlock FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="24" FontWeight="SemiBold" Foreground="{StaticResource Ink}">
+            <Run Text="RoomOps" /><Run Text=" Studio" Foreground="{StaticResource InkMuted}" FontWeight="Normal" />
+          </TextBlock>
+          <TextBlock FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12" Foreground="{StaticResource InkMuted}" Text="Intelligent Workspace Administration" />
+        </StackPanel>
+      </StackPanel>
+      <TextBlock Grid.Row="2" x:Name="StatusText" Margin="0,0,0,10" FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="12" Foreground="{StaticResource InkMuted}" Text="Starting…" />
+      <Border Grid.Row="3" Height="2" CornerRadius="1" Background="#272C34" ClipToBounds="True">
+        <Border x:Name="ProgressBar" Width="120" HorizontalAlignment="Left" CornerRadius="1" Background="{StaticResource Accent}">
+          <Border.RenderTransform>
+            <TranslateTransform x:Name="ProgressShift" X="-120" />
+          </Border.RenderTransform>
+        </Border>
+      </Border>
+    </Grid>
+  </Border>
+</Window>
